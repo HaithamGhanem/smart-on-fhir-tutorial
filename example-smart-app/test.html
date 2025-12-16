@@ -2,55 +2,69 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>SMART on FHIR Cerner Launch</title>
+  <title>Cerner SMART on FHIR Patient Viewer</title>
+  <style>
+    body { font-family: Arial; margin: 20px; }
+    input, button { padding: 8px; margin: 5px 0; }
+    pre { background: #f4f4f4; padding: 10px; max-height: 300px; overflow: auto; }
+  </style>
 </head>
+
 <body>
-  <h2>SMART on FHIR – Cerner</h2>
-  <pre id="output">Starting...</pre>
+<h2>SMART on FHIR – Cerner Patient Details</h2>
+
+<div id="authStatus">Waiting for Cerner launch...</div>
+
+<hr>
+
+<label>Patient ID (must match SMART token):</label><br>
+<input id="patientIdInput" placeholder="Enter patient id">
+<button onclick="loadPatientData()">Get Patient Details</button>
+
+<h3>Output</h3>
+<pre id="output"></pre>
 
 <script>
-/*** CONFIG ***/
+/* ================= CONFIG ================= */
 const CLIENT_ID = "8774d3ff-ca56-416b-b5d1-3df7c0589390";
 const REDIRECT_URI = "https://haithamghanem.github.io/smart-on-fhir-tutorial/example-smart-app/";
 const SCOPES = "launch openid fhirUser patient/*.read";
 
-/*** UTILITIES ***/
-function getParam(name) {
+/* ================= HELPERS ================= */
+function param(name) {
   return new URLSearchParams(window.location.search).get(name);
 }
 
-function base64urlencode(arrayBuffer) {
-  return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+function base64url(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-async function sha256(str) {
-  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+async function sha256(text) {
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
 }
 
-/*** PKCE ***/
 async function generatePKCE() {
-  const verifier = base64urlencode(crypto.getRandomValues(new Uint8Array(32)));
-  const challenge = base64urlencode(await sha256(verifier));
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = base64url(await sha256(verifier));
   sessionStorage.setItem("pkce_verifier", verifier);
   return challenge;
 }
 
-/*** MAIN FLOW ***/
+/* ================= GLOBAL STATE ================= */
+let ISS, ACCESS_TOKEN, TOKEN_PATIENT;
+
+/* ================= AUTH FLOW ================= */
 (async function () {
-  const output = document.getElementById("output");
+  const code = param("code");
+  const iss = param("iss");
+  const launch = param("launch");
 
-  const code = getParam("code");
-  const iss = getParam("iss");
-  const launch = getParam("launch");
-
-  /* STEP 1: Initial EHR Launch */
+  /* Initial Cerner launch */
   if (!code && iss && launch) {
     const challenge = await generatePKCE();
-
     const authUrl =
-      `${iss}/authorize?` +
-      `response_type=code` +
+      `${iss}/authorize?response_type=code` +
       `&client_id=${encodeURIComponent(CLIENT_ID)}` +
       `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
       `&scope=${encodeURIComponent(SCOPES)}` +
@@ -58,36 +72,80 @@ async function generatePKCE() {
       `&launch=${encodeURIComponent(launch)}` +
       `&code_challenge=${challenge}` +
       `&code_challenge_method=S256` +
-      `&state=abc123`;
+      `&state=123`;
 
     window.location.href = authUrl;
     return;
   }
 
-  /* STEP 2: Redirect Back with Code */
+  /* Redirect back with code */
   if (code && iss) {
+    ISS = iss;
     const verifier = sessionStorage.getItem("pkce_verifier");
 
-    const body =
-      `grant_type=authorization_code` +
-      `&code=${encodeURIComponent(code)}` +
-      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
-      `&client_id=${encodeURIComponent(CLIENT_ID)}` +
-      `&code_verifier=${encodeURIComponent(verifier)}`;
-
-    const tokenResponse = await fetch(`${iss}/token`, {
+    const tokenResp = await fetch(`${iss}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body
+      body:
+        `grant_type=authorization_code` +
+        `&code=${encodeURIComponent(code)}` +
+        `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+        `&client_id=${encodeURIComponent(CLIENT_ID)}` +
+        `&code_verifier=${encodeURIComponent(verifier)}`
     });
 
-    const token = await tokenResponse.json();
-    output.textContent = JSON.stringify(token, null, 2);
+    const token = await tokenResp.json();
+    ACCESS_TOKEN = token.access_token;
+    TOKEN_PATIENT = token.patient;
+
+    document.getElementById("authStatus").innerHTML =
+      `✅ Authorized<br>Allowed Patient ID: <b>${TOKEN_PATIENT}</b>`;
+
+    document.getElementById("patientIdInput").value = TOKEN_PATIENT;
+  }
+})();
+
+/* ================= FHIR CALL ================= */
+async function fhir(resource) {
+  const r = await fetch(`${ISS}/${resource}`, {
+    headers: {
+      "Authorization": `Bearer ${ACCESS_TOKEN}`,
+      "Accept": "application/fhir+json"
+    }
+  });
+  if (!r.ok) throw new Error(`${resource} failed (${r.status})`);
+  return r.json();
+}
+
+/* ================= LOAD DATA ================= */
+async function loadPatientData() {
+  const pid = document.getElementById("patientIdInput").value.trim();
+  const out = document.getElementById("output");
+
+  if (pid !== TOKEN_PATIENT) {
+    out.textContent =
+      "❌ Error: You may ONLY access the patient ID from the SMART token.";
     return;
   }
 
-  output.textContent = "Waiting for Cerner launch...";
-})();
+  out.textContent = "Loading patient data...";
+
+  try {
+    const data = {
+      Patient: await fhir(`Patient/${pid}`),
+      Encounters: await fhir(`Encounter?patient=${pid}`),
+      Observations: await fhir(`Observation?patient=${pid}`),
+      Conditions: await fhir(`Condition?patient=${pid}`),
+      Medications: await fhir(`MedicationRequest?patient=${pid}`),
+      Allergies: await fhir(`AllergyIntolerance?patient=${pid}`)
+    };
+
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    out.textContent = "FHIR Error: " + e.message;
+  }
+}
 </script>
 </body>
 </html>
+
