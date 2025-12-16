@@ -1,5 +1,5 @@
-(function(window){
-  window.extractData = function() {
+
+function extractData() {
     var ret = $.Deferred();
 
     function onError() {
@@ -8,6 +8,7 @@
     }
 
     function onReady(smart)  {
+	  //checking to make sure this has launch scope
       if (smart.hasOwnProperty('patient')) {
         var patient = smart.patient;
         var pt = patient.read();
@@ -15,19 +16,37 @@
                     type: 'Observation',
                     query: {
                       code: {
-                        $or: ['http://loinc.org|8302-2', 'http://loinc.org|8462-4',
-                              'http://loinc.org|8480-6', 'http://loinc.org|2085-9',
-                              'http://loinc.org|2089-1', 'http://loinc.org|55284-4']
-                      }
+                        $or: ['http://loinc.org|8302-2', //height
+							  'http://loinc.org|2085-9', //hdl
+                              'http://loinc.org|2089-1', //ldl
+							  'http://loinc.org|85354-9' //bp
+							 ]
+                      },
+					  date: 'gt2020-01-01'
+                    }
+                  });
+		
+        var alg = smart.patient.api.fetchAll({
+                    "type": 'AllergyIntolerance',
+                    "query": {
+                      "clinical-status": 'active'
                     }
                   });
 
-        $.when(pt, obv).fail(onError);
+        $.when(pt, obv, alg).fail(onError);
 
-        $.when(pt, obv).done(function(patient, obv) {
+        $.when(pt, obv, alg).done(function(patient, obv, allergies) {
+		  console.log(patient);
+		  console.log(obv);
+		  console.log(allergies);
           var byCodes = smart.byCodes(obv, 'code');
           var gender = patient.gender;
+          var dob = new Date(patient.birthDate);
+          var day = dob.getDate();
+          var monthIndex = dob.getMonth() + 1;
+          var year = dob.getFullYear();
 
+          var dobStr = monthIndex + '/' + day + '/' + year;
           var fname = '';
           var lname = '';
 
@@ -37,16 +56,32 @@
           }
 
           var height = byCodes('8302-2');
-          var systolicbp = getBloodPressureValue(byCodes('55284-4'),'8480-6');
-          var diastolicbp = getBloodPressureValue(byCodes('55284-4'),'8462-4');
+          var systolicbp = getBloodPressureValue(byCodes('85354-9'),'8480-6');
+          var diastolicbp = getBloodPressureValue(byCodes('85354-9'),'8462-4');
           var hdl = byCodes('2085-9');
           var ldl = byCodes('2089-1');
+		  var allergyTable = "<table>";
+		  var allergyLen = allergies.length;
+		  for (var i=0;i<allergyLen;i++){
+			  var reactionStr = [];
+			  if(allergies[i].reaction !== undefined) {
+				  for(var j=0,jLen=allergies[i].reaction.length;j<jLen;j++) {
+					  reactionStr.push(allergies[i].reaction[j].manifestation[0].text);
+				  }
+			  }
+			  allergyTable += "<tr><td>"+allergies[i].code.text+"</td><td>"+reactionStr.join(", ")+"</td></tr>";
+		  }
+		  if (allergyLen === 0) {
+			  allergyTable += "<tr><td>No Allergies Found</td></tr>";
+		  }
+		  allergyTable += "</table>";
 
           var p = defaultPatient();
-          p.birthdate = patient.birthDate;
+          p.birthdate = dobStr;
           p.gender = gender;
           p.fname = fname;
           p.lname = lname;
+          p.age = parseInt(calculateAge(dob));
           p.height = getQuantityValueAndUnit(height[0]);
 
           if (typeof systolicbp != 'undefined')  {
@@ -59,6 +94,8 @@
 
           p.hdl = getQuantityValueAndUnit(hdl[0]);
           p.ldl = getQuantityValueAndUnit(ldl[0]);
+		  
+		  p.allergies = allergyTable;
 
           ret.resolve(p);
         });
@@ -70,23 +107,25 @@
     FHIR.oauth2.ready(onReady, onError);
     return ret.promise();
 
-  };
+};
 
-  function defaultPatient(){
+function defaultPatient(){
     return {
       fname: {value: ''},
       lname: {value: ''},
       gender: {value: ''},
       birthdate: {value: ''},
+      age: {value: ''},
       height: {value: ''},
       systolicbp: {value: ''},
       diastolicbp: {value: ''},
       ldl: {value: ''},
       hdl: {value: ''},
+	  allergies: {value: ''}
     };
-  }
+}
 
-  function getBloodPressureValue(BPObservations, typeOfPressure) {
+function getBloodPressureValue(BPObservations, typeOfPressure) {
     var formattedBPObservations = [];
     BPObservations.forEach(function(observation){
       var BP = observation.component.find(function(component){
@@ -101,9 +140,30 @@
     });
 
     return getQuantityValueAndUnit(formattedBPObservations[0]);
-  }
+}
 
-  function getQuantityValueAndUnit(ob) {
+function isLeapYear(year) {
+    return new Date(year, 1, 29).getMonth() === 1;
+}
+
+function calculateAge(date) {
+    if (Object.prototype.toString.call(date) === '[object Date]' && !isNaN(date.getTime())) {
+      var d = new Date(date), now = new Date();
+      var years = now.getFullYear() - d.getFullYear();
+      d.setFullYear(d.getFullYear() + years);
+      if (d > now) {
+        years--;
+        d.setFullYear(d.getFullYear() - 1);
+      }
+      var days = (now.getTime() - d.getTime()) / (3600 * 24 * 1000);
+      return years + days / (isLeapYear(now.getFullYear()) ? 366 : 365);
+    }
+    else {
+      return undefined;
+    }
+}
+
+function getQuantityValueAndUnit(ob) {
     if (typeof ob != 'undefined' &&
         typeof ob.valueQuantity != 'undefined' &&
         typeof ob.valueQuantity.value != 'undefined' &&
@@ -112,20 +172,21 @@
     } else {
       return undefined;
     }
-  }
+}
 
-  window.drawVisualization = function(p) {
+function drawVisualization(p) {
     $('#holder').show();
     $('#loading').hide();
     $('#fname').html(p.fname);
     $('#lname').html(p.lname);
     $('#gender').html(p.gender);
     $('#birthdate').html(p.birthdate);
+    $('#age').html(p.age);
     $('#height').html(p.height);
     $('#systolicbp').html(p.systolicbp);
     $('#diastolicbp').html(p.diastolicbp);
     $('#ldl').html(p.ldl);
     $('#hdl').html(p.hdl);
-  };
-
-})(window);
+	$('#allergyIntolerance').html(p.allergies);
+	
+};
