@@ -1,39 +1,79 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <link rel='stylesheet' type='text/css' href='./src/css/example-smart-app.css'>
-    <!--
-      Temporarily disable cerner-smart-embeddable-lib
-      <link rel='stylesheet' type='text/css' href='./lib/css/cerner-smart-embeddable-lib-1.0.0.min.css'>
-    -->
-    <title>Haitham Example-SMART-App</title>
-  </head>
-  <body>
-    <!-- Required JS files to enable this page to embed within an MPage -->
-    <!--
-      Temporarily disable cerner-smart-embeddable-lib
-      <script src='https://cdnjs.cloudflare.com/ajax/libs/babel-polyfill/6.26.0/polyfill.min.js'></script>
-      <script src='./lib/js/cerner-smart-embeddable-lib-1.0.0.min.js'></script>
-    -->
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Simple SMART App</title>
+</head>
+<body>
 
-    <!-- FHIR Client JS Library -->
-    <script src='./lib/js/fhir-client-v0.1.12.js'></script>
+<h3>SMART on FHIR – Patient Details</h3>
+<pre id="output">Waiting...</pre>
 
-    <!-- Prevent session bleed caused by single threaded embedded browser and sessionStorage API -->
-    <!-- https://github.com/cerner/fhir-client-cerner-additions -->
-    <script src='./lib/js/fhir-client-cerner-additions-1.0.0.js'></script>
-    <script>
-      FHIR.oauth2.authorize({
-        'client_id': '8774d3ff-ca56-416b-b5d1-3df7c0589390',
-        'scope':  'patient/Patient.read patient/Observation.read launch online_access openid profile'
-      });
-    </script>
-    <div class="spinner">
-      <div class="bounce1"></div>
-      <div class="bounce2"></div>
-      <div class="bounce3"></div>
-    </div>
-  </body>
+<script>
+const CLIENT_ID = "YOUR_CLIENT_ID";
+const REDIRECT_URI = window.location.origin + window.location.pathname;
+const SCOPES = "launch patient/*.read openid fhirUser";
+
+function param(name) {
+  return new URLSearchParams(window.location.search).get(name);
+}
+
+(async function () {
+  const iss = param("iss");
+  const launch = param("launch");
+  const code = param("code");
+  const output = document.getElementById("output");
+
+  /* ========== STEP 1: Launch ========== */
+  if (!code && iss && launch) {
+    const authUrl =
+      `${iss}/authorize?` +
+      `response_type=code` +
+      `&client_id=${CLIENT_ID}` +
+      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+      `&scope=${encodeURIComponent(SCOPES)}` +
+      `&aud=${encodeURIComponent(iss)}` +
+      `&launch=${encodeURIComponent(launch)}`;
+
+    window.location.href = authUrl;
+    return;
+  }
+
+  /* ========== STEP 2: Token ========== */
+  if (code && iss) {
+    const tokenResp = await fetch(`${iss}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body:
+        `grant_type=authorization_code` +
+        `&code=${code}` +
+        `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+        `&client_id=${CLIENT_ID}`
+    });
+
+    const token = await tokenResp.json();
+
+    const accessToken = token.access_token;
+    const patientId = token.patient;
+
+    output.textContent = "Patient ID from token: " + patientId;
+
+    /* ========== STEP 3: Get Patient ========== */
+    const patientResp = await fetch(
+      `${iss}/Patient/${patientId}`,
+      {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Accept": "application/fhir+json"
+        }
+      }
+    );
+
+    const patient = await patientResp.json();
+    output.textContent = JSON.stringify(patient, null, 2);
+  }
+})();
+</script>
+
+</body>
 </html>
