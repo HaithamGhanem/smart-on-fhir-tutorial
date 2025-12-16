@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SMART on FHIR Cerner Launch</title>
+</head>
+<body>
+  <h2>SMART on FHIR – Cerner</h2>
+  <pre id="output">Starting...</pre>
+
+<script>
+/*** CONFIG ***/
+const CLIENT_ID = "YOUR_CLIENT_ID";
+const REDIRECT_URI = "https://yourapp.com/index.html";
+const SCOPES = "launch openid fhirUser patient/*.read";
+
+/*** UTILITIES ***/
+function getParam(name) {
+  return new URLSearchParams(window.location.search).get(name);
+}
+
+function base64urlencode(arrayBuffer) {
+  return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function sha256(str) {
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+}
+
+/*** PKCE ***/
+async function generatePKCE() {
+  const verifier = base64urlencode(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = base64urlencode(await sha256(verifier));
+  sessionStorage.setItem("pkce_verifier", verifier);
+  return challenge;
+}
+
+/*** MAIN FLOW ***/
+(async function () {
+  const output = document.getElementById("output");
+
+  const code = getParam("code");
+  const iss = getParam("iss");
+  const launch = getParam("launch");
+
+  /* STEP 1: Initial EHR Launch */
+  if (!code && iss && launch) {
+    const challenge = await generatePKCE();
+
+    const authUrl =
+      `${iss}/authorize?` +
+      `response_type=code` +
+      `&client_id=${encodeURIComponent(CLIENT_ID)}` +
+      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+      `&scope=${encodeURIComponent(SCOPES)}` +
+      `&aud=${encodeURIComponent(iss)}` +
+      `&launch=${encodeURIComponent(launch)}` +
+      `&code_challenge=${challenge}` +
+      `&code_challenge_method=S256` +
+      `&state=abc123`;
+
+    window.location.href = authUrl;
+    return;
+  }
+
+  /* STEP 2: Redirect Back with Code */
+  if (code && iss) {
+    const verifier = sessionStorage.getItem("pkce_verifier");
+
+    const body =
+      `grant_type=authorization_code` +
+      `&code=${encodeURIComponent(code)}` +
+      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+      `&client_id=${encodeURIComponent(CLIENT_ID)}` +
+      `&code_verifier=${encodeURIComponent(verifier)}`;
+
+    const tokenResponse = await fetch(`${iss}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body
+    });
+
+    const token = await tokenResponse.json();
+    output.textContent = JSON.stringify(token, null, 2);
+    return;
+  }
+
+  output.textContent = "Waiting for Cerner launch...";
+})();
+</script>
+</body>
+</html>
