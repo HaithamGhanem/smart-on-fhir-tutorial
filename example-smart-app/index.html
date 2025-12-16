@@ -2,29 +2,35 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Simple SMART App</title>
+  <title>SMART on FHIR – Cerner (Working)</title>
 </head>
 <body>
 
-<h3>SMART on FHIR – Patient Details</h3>
-<pre id="output">Waiting...</pre>
+<h3>SMART on FHIR – Patient</h3>
+<pre id="output">Waiting for launch...</pre>
 
 <script>
+/* ========== CONFIG ========== */
 const CLIENT_ID = "8774d3ff-ca56-416b-b5d1-3df7c0589390";
+/* IMPORTANT: must EXACTLY match Cerner App Gallery */
 const REDIRECT_URI = window.location.origin + window.location.pathname;
+
 const SCOPES = "launch patient/*.read openid fhirUser";
 
+/* ========== HELPERS ========== */
 function param(name) {
   return new URLSearchParams(window.location.search).get(name);
 }
 
+const output = document.getElementById("output");
+
+/* ========== MAIN FLOW ========== */
 (async function () {
   const iss = param("iss");
   const launch = param("launch");
   const code = param("code");
-  const output = document.getElementById("output");
 
-  /* ========== STEP 1: Launch ========== */
+  /* STEP 1: Cerner launches app */
   if (!code && iss && launch) {
     const authUrl =
       `${iss}/authorize?` +
@@ -39,26 +45,36 @@ function param(name) {
     return;
   }
 
-  /* ========== STEP 2: Token ========== */
+  /* STEP 2: Exchange code for token */
   if (code && iss) {
+    output.textContent = "Exchanging code for token...";
+
     const tokenResp = await fetch(`${iss}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body:
         `grant_type=authorization_code` +
-        `&code=${code}` +
+        `&code=${encodeURIComponent(code)}` +
         `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
         `&client_id=${CLIENT_ID}`
     });
 
     const token = await tokenResp.json();
 
-    const accessToken = token.access_token;
+    console.log("TOKEN RESPONSE", token);
+
+    if (!token.access_token) {
+      output.textContent = "❌ Token error:\n" + JSON.stringify(token, null, 2);
+      return;
+    }
+
+    /* STEP 3: Use token to get patient */
     const patientId = token.patient;
+    const accessToken = token.access_token;
 
-    output.textContent = "Patient ID from token: " + patientId;
+    output.textContent =
+      "Authorized.\nPatient ID: " + patientId + "\nLoading patient...";
 
-    /* ========== STEP 3: Get Patient ========== */
     const patientResp = await fetch(
       `${iss}/Patient/${patientId}`,
       {
@@ -68,6 +84,12 @@ function param(name) {
         }
       }
     );
+
+    if (!patientResp.ok) {
+      output.textContent =
+        "FHIR error " + patientResp.status;
+      return;
+    }
 
     const patient = await patientResp.json();
     output.textContent = JSON.stringify(patient, null, 2);
