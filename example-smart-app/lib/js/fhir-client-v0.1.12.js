@@ -251,8 +251,14 @@ return /******/ (function(modules) { // webpackBootstrap
 	      var results;
 	      results = [];
 	      for (k in m) {
-	        v = m[k];
-	        results.push([k, v]);
+			v = m[k];
+			if (k === "_id") {
+				results = [[k, v]];
+				break;
+			}
+			else {
+				results.push([k, v]);
+			}
 	      }
 	      return results;
 	    })()).reduce(fn, acc);
@@ -17187,8 +17193,8 @@ BBClient.ready = function(input, callback, errback){
     if (validTokenResponse()) { // we're reloading after successful completion
       // Check if 2 minutes from access token expiration timestamp
       var tokenResponse = getPreviousToken();
-      var heck = jwt.decode(tokenResponse.access_token);
-      var nearExpTime =Math.floor(Date.now() / 1000) >= (tokenResponse.expires_in - 120); //Math.floor(Date.now() / 1000) >= (payloadCheck['exp'] - 120);
+      var payloadCheck = jwt.decode(tokenResponse.access_token);
+      var nearExpTime = Math.floor(Date.now() / 1000) >= (tokenResponse.expires_in - 120);
 
       if (tokenResponse.refresh_token
         && tokenResponse.scope.indexOf('online_access') > -1
@@ -17225,7 +17231,8 @@ BBClient.ready = function(input, callback, errback){
 
     var fhirClientParams = {
       serviceUrl: state.provider.url,
-      patientId: tokenResponse.patient
+      patientId: tokenResponse.patient,
+      encounterId: tokenResponse.encounter
     };
     
     if (tokenResponse.id_token) {
@@ -17499,7 +17506,9 @@ function FhirClient(p) {
     
     if (p.patientId) {
         client.patient = {};
+		client.encounter = {};
         client.patient.id = p.patientId;
+		client.encounter.id = p.encounterId;
         client.patient.api = fhir({
             baseUrl: server.serviceUrl,
             auth: auth,
