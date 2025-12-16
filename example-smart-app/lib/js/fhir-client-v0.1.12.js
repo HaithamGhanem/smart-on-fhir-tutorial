@@ -17187,8 +17187,8 @@ BBClient.ready = function(input, callback, errback){
     if (validTokenResponse()) { // we're reloading after successful completion
       // Check if 2 minutes from access token expiration timestamp
       var tokenResponse = getPreviousToken();
-      var payloadCheck = jwt.decode(tokenResponse.access_token);
-      var nearExpTime = false; //Math.floor(Date.now() / 1000) >= (payloadCheck['exp'] - 120);
+      var heck = jwt.decode(tokenResponse.access_token);
+      var nearExpTime =Math.floor(Date.now() / 1000) >= (tokenResponse.expires_in - 120); //Math.floor(Date.now() / 1000) >= (payloadCheck['exp'] - 120);
 
       if (tokenResponse.refresh_token
         && tokenResponse.scope.indexOf('online_access') > -1
